@@ -1,0 +1,6 @@
+{
+    "name": "crater",
+    "paths": ["."],
+    "entrypoint": "crater",
+    "dependencies": {}
+}
