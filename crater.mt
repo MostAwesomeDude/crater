@@ -1,9 +1,36 @@
 import "lib/codec" =~ [=> composeCodec :DeepFrozen]
 import "lib/codec/utf8" =~ [=> UTF8 :DeepFrozen]
 import "lib/json" =~ [=> JSON :DeepFrozen]
+import "lib/tubes" =~ [
+    => makeUTF8EncodePump :DeepFrozen,
+    => makePumpTube :DeepFrozen,
+]
 exports (main)
 
 def UTF8JSON :DeepFrozen := composeCodec(UTF8, JSON)
+
+def makeStatistics(name :Str, data) as DeepFrozen:
+    def [
+        => nickname :Str,
+        => timestamp :Double,
+        "stats" => [
+            "counters" => counters,
+            "stats" => stats,
+        ],
+    ] := data
+    traceln(counters.getKeys())
+    traceln(stats.getKeys())
+
+    # `stats` also contains this key on helpers.
+    def hasHelper :Bool := counters.contains("chk_upload_helper")
+
+    return object statistics as DeepFrozen:
+        to report():
+            return "\n".join([
+                `$nickname ($name) checked at $timestamp:`,
+                `Helper: ${hasHelper.pick("enabled", "disabled")}`,
+                `…`,
+            ]) + "\n"
 
 def undot(specimen) as DeepFrozen:
     "Recursively re-add structure by undoing dots."
@@ -24,10 +51,20 @@ def undot(specimen) as DeepFrozen:
         match _:
             specimen
 
-def main(argv, => makeFileResource) as DeepFrozen:
+def setupStdOut(makeStdOut) as DeepFrozen:
+    def stdout := makePumpTube(makeUTF8EncodePump())
+    stdout<-flowTo(makeStdOut())
+    return stdout
+
+def main(argv, => makeFileResource, => makeStdOut) as DeepFrozen:
+    def stdout := setupStdOut(makeStdOut)
+
     def bs := makeFileResource(argv.last())<-getContents()
     return when (bs) ->
         def via (UTF8JSON.decode) dottedMap := bs
         def undottedMap := undot(dottedMap)
-        traceln(undottedMap)
+        stdout<-receive(`$undottedMap$\n`)
+        for name => data in undottedMap:
+            def stats := makeStatistics(name, data)
+            stdout<-receive(stats.report())
         0
