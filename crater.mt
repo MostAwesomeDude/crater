@@ -5,6 +5,8 @@ import "lib/tubes" =~ [
     => makeUTF8EncodePump :DeepFrozen,
     => makePumpTube :DeepFrozen,
 ]
+import "lib/gai" =~ [=> makeGAI :DeepFrozen]
+import "http/client" =~ [=> makeRequest :DeepFrozen]
 import "crater/stats" =~ [
     => makeStatistics :DeepFrozen,
 ]
@@ -36,16 +38,34 @@ def setupStdOut(makeStdOut) as DeepFrozen:
     stdout<-flowTo(makeStdOut())
     return stdout
 
-def main(argv, => makeFileResource, => makeStdOut) as DeepFrozen:
-    # def [via (UTF8.encode) hostname] := argv
-    def stdout := setupStdOut(makeStdOut)
+def setupPoller(hostname :Bytes, getAddrInfo, makeTCP4ClientEndpoint) as DeepFrozen:
+    def addrs := getAddrInfo(hostname, b``)
+    return when (addrs) ->
+        traceln(`Finished GAI: $addrs`)
+        def gai := makeGAI(addrs)
+        def [addr] + _ := gai.TCP4()
+        def address := addr.getAddress()
+        def port :Int := 3456
+        def poll():
+            traceln(`Making HTTP request to $address:$port`)
+            return makeRequest(makeTCP4ClientEndpoint, address,
+                               "/statistics?t=json", => port).get()
 
-    def bs := makeFileResource(argv.last())<-getContents()
-    return when (bs) ->
-        def via (UTF8JSON.decode) dottedMap := bs
+def main(argv, => getAddrInfo, => makeTCP4ClientEndpoint, => makeStdOut) as DeepFrozen:
+    def [via (UTF8.encode) hostname] := argv
+    def stdout := setupStdOut(makeStdOut)
+    def poll := setupPoller(hostname, getAddrInfo, makeTCP4ClientEndpoint)
+
+    return when (def response := poll<-()) ->
+        traceln(`Got response $response`)
+        def via (UTF8JSON.decode) dottedMap := response.body()
         def undottedMap := undot(dottedMap)
-        for name => data in (undottedMap):
-            def stats := makeStatistics(name, data)
-            stdout<-receive(stats.report())
-            stdout<-receive("\n")
+        def name :Str := argv[0]
+        def stats := makeStatistics(name, undottedMap)
+        stdout<-receive(stats.report())
+        stdout<-receive("\n")
         0
+    catch problem:
+        traceln.exception(problem)
+        stdout<-receive(`Problem: $problem$\n`)
+        1

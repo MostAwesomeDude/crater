@@ -2,5 +2,9 @@
     "name": "crater",
     "paths": ["."],
     "entrypoint": "crater",
-    "dependencies": {}
+    "dependencies": {
+        "http": {
+            "url": "https://github.com/monte-language/mt-http"
+        }
+    }
 }
